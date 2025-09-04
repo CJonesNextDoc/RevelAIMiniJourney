@@ -1,10 +1,14 @@
 import buildApp from './app';
 import { initRepository } from './db/repo';
+import journeysRoutes from './routes/journeys';
 
 // Initialize DB and run schema before starting the server
 initRepository();
 
 const app = buildApp();
+
+// Register routes
+app.register(journeysRoutes);
 
 const PORT = Number(process.env.PORT) || 3000;
 
