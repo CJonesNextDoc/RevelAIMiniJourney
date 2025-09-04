@@ -3,7 +3,7 @@
 Backend-only mini engine to orchestrate a patient journey (Fastify + TypeScript + SQLite).  
 Focus: backend logic, API design, tests.
 
-## Build Essentials
+## Build Plan Essentials
 - Node 20+, TypeScript, Fastify, SQLite3, Zod, Jest.
 - Validate payloads at the edge with Zod.
 - Time in UTC; ISO strings in DB.
