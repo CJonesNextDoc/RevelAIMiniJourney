@@ -30,10 +30,15 @@ export function getJourney(id: string) {
 }
 
 // Runs
-export function createRun(journeyId: string, patientId?: string) {
+export function createRun(journeyId: string, patientId?: string, idempotencyKey?: string) {
+  if (idempotencyKey) {
+    const existing: any = db().prepare(`SELECT id FROM runs WHERE journey_id = ? AND idempotency_key = ? LIMIT 1`).get(journeyId, idempotencyKey);
+    if (existing && existing.id) return existing.id;
+  }
+
   const id = uuidv4();
-  const stmt = db().prepare(`INSERT INTO runs (id, journey_id, patient_id, state, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`);
-  stmt.run(id, journeyId, patientId ?? null, 'queued');
+  const stmt = db().prepare(`INSERT INTO runs (id, journey_id, patient_id, idempotency_key, state, created_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`);
+  stmt.run(id, journeyId, patientId ?? null, idempotencyKey ?? null, 'queued');
   return id;
 }
 
@@ -44,6 +49,11 @@ export function getRun(id: string) {
 }
 
 export function updateRunState(id: string, state: string, fields: Record<string, unknown> = {}) {
+  try {
+    console.log(`[repo] updateRunState id=${id} -> state=${state} fields=${JSON.stringify(fields)}`);
+  } catch (e) {
+    // ignore JSON stringify errors
+  }
   const parts = ['state = ?'];
   const values: any[] = [state];
   if (fields.current_node_id !== undefined) { parts.push('current_node_id = ?'); values.push(fields.current_node_id); }
@@ -57,7 +67,22 @@ export function updateRunState(id: string, state: string, fields: Record<string,
   db().prepare(sql).run(...values);
 }
 
+// Atomically claim a run for processing: set state -> in_progress and started_at if the run
+// is currently queued or waiting_delay and its next_wake_at is null or <= now.
+export function claimRunForProcessing(id: string, nowIso?: string) {
+  const now = nowIso ?? new Date().toISOString();
+  // Use a JS-supplied timestamp for the comparison so tests that mock Date.now() work correctly.
+  const stmt = db().prepare(`UPDATE runs SET state = 'in_progress', started_at = ? WHERE id = ? AND state IN ('queued','waiting_delay') AND (next_wake_at IS NULL OR next_wake_at <= ?)`);
+  const info = stmt.run(now, id, now);
+  const ok = info.changes === 1;
+  console.log(`[repo] claimRunForProcessing id=${id} now=${now} changes=${info.changes} claimed=${ok}`);
+  return ok;
+}
+
 export function appendRunStep(runId: string, nodeId: string | null, type: string, payload: unknown) {
+  try {
+    console.log(`[repo] appendRunStep runId=${runId} nodeId=${nodeId} type=${type}`);
+  } catch (e) {}
   const stmt = db().prepare(`INSERT INTO run_steps (run_id, node_id, type, payload, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`);
   const info = stmt.run(runId, nodeId, type, payload ? JSON.stringify(payload) : null);
   return info.lastInsertRowid as number;
@@ -84,4 +109,5 @@ export default {
   appendRunStep,
   getRunSteps,
   findReadyRuns,
+  claimRunForProcessing,
 };

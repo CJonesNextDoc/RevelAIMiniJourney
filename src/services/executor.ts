@@ -1,0 +1,213 @@
+import repo from '../db/repo';
+import { Journey, Node, PatientContext } from '../types/journey';
+
+const DEFAULT_MAX_STEPS = 1000;
+
+// registry for scheduled timeouts so tests can cancel them and avoid callbacks running after teardown
+const scheduledTimeouts: NodeJS.Timeout[] = [];
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function evalCondition(left: any, operator: string, right: any) {
+  switch (operator) {
+    case '==': return left == right;
+    case '!=': return left != right;
+    case '>': return left > right;
+    case '>=': return left >= right;
+    case '<': return left < right;
+    case '<=': return left <= right;
+    default: return false;
+  }
+}
+
+async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
+  console.log(`[executor] processRun start runId=${runId}`);
+  const run: any = repo.getRun(runId);
+  if (!run) {
+    console.error(`[executor] run not found ${runId}`);
+    return;
+  }
+
+  try {
+    console.log(`[executor] runRow id=${runId} state=${run.state} current_node_id=${run.current_node_id} next_wake_at=${run.next_wake_at}`);
+  } catch (e) {}
+
+  // If run is waiting for a wake time that is in the future, skip processing
+  if (run.state === 'waiting_delay' && run.next_wake_at) {
+    const nextWake = Date.parse(run.next_wake_at);
+    if (nextWake > Date.now()) {
+  console.log(`[executor] run ${runId} waiting until ${run.next_wake_at} (now=${new Date(Date.now()).toISOString()})`);
+      return;
+    }
+  }
+
+  // attempt to atomically claim the run for processing
+  const claimed = repo.claimRunForProcessing(runId, nowIso());
+  if (!claimed) {
+    // Fetch current DB state for debugging
+    const cur = repo.getRun(runId);
+    console.log(`[executor] run ${runId} not claimable (another worker may be processing) - dbState=${cur?.state} next_wake_at=${cur?.next_wake_at}`);
+    return;
+  }
+
+  // load journey definition (repo returns a row with parsed payload)
+  const journeyRow: any = repo.getJourney(run.journey_id);
+  if (!journeyRow) {
+    repo.updateRunState(runId, 'failed', { error: 'journey_not_found' });
+    repo.appendRunStep(runId, null, 'error', { message: 'journey not found' });
+    return;
+  }
+  try {
+    const nodeSummary = (journeyRow.payload && Array.isArray(journeyRow.payload.nodes)) ? journeyRow.payload.nodes.map((n: any) => `${n.id}:${n.type}`).join(',') : 'none';
+    console.log(`[executor] journey id=${journeyRow.id} startNodeId=${journeyRow.payload?.startNodeId} nodes=${nodeSummary}`);
+  } catch (e) {}
+  const journey: Journey = journeyRow.payload as Journey;
+
+  // obtain patient context from initial trigger step if present
+  const steps = repo.getRunSteps(runId);
+  const triggered = steps.find((s: any) => s.type === 'triggered');
+  const patientContext: PatientContext = (triggered && triggered.payload && triggered.payload.context) ? triggered.payload.context : {} as any;
+
+  // determine starting node
+  let currentNodeId = run.current_node_id ?? journey.startNodeId ?? (journey.nodes && journey.nodes[0] && journey.nodes[0].id) ?? null;
+
+  let stepCount = 0;
+  while (currentNodeId && stepCount < maxSteps) {
+    stepCount += 1;
+    const node = (journey.nodes || []).find(n => n.id === currentNodeId) as Node | undefined;
+    if (!node) {
+      repo.updateRunState(runId, 'failed', { error: `node_not_found:${currentNodeId}` });
+      repo.appendRunStep(runId, currentNodeId, 'error', { message: 'node not found' });
+      console.error(`[executor] node not found ${currentNodeId} for run ${runId}`);
+      return;
+    }
+
+    console.log(`[executor] run=${runId} node=${node.id} type=${(node as any).type}`);
+    const ntype = (node as any).type;
+    if (ntype === 'MESSAGE') {
+      // mark started
+      repo.appendRunStep(runId, node.id, 'started', { });
+      // persist current node
+      repo.updateRunState(runId, 'in_progress', { current_node_id: node.id });
+      // log sending
+      const message = (node as any).message ?? '';
+      console.log(`[executor] Sending message for run ${runId}, node ${node.id}: ${message}`);
+      repo.appendRunStep(runId, node.id, 'message_sent', { message });
+      // move to next
+      currentNodeId = (node as any).next ?? null;
+      repo.updateRunState(runId, 'in_progress', { current_node_id: currentNodeId });
+      continue;
+    }
+
+    if (ntype === 'DELAY') {
+      const delaySeconds = (node as any).delaySeconds ?? (node as any).delay ?? 0;
+
+      // If the run's next_wake_at is set and in the past (<= now), treat the DELAY as completed
+      // and move on to the next node. Do this regardless of the current in-memory state because
+      // claimRunForProcessing may have already flipped state to 'in_progress'.
+      const currentRunRow: any = repo.getRun(runId);
+      if (currentRunRow && currentRunRow.next_wake_at) {
+        const nextWakeTs = Date.parse(currentRunRow.next_wake_at);
+        if (!isNaN(nextWakeTs) && nextWakeTs <= Date.now()) {
+          // delay completed, note it and continue to the next node
+          repo.appendRunStep(runId, node.id, 'delay_resumed', { delaySeconds, resumedAt: new Date().toISOString() });
+          const nextNode = (node as any).next ?? null;
+          repo.updateRunState(runId, 'in_progress', { current_node_id: nextNode, next_wake_at: null });
+          currentNodeId = nextNode;
+          continue;
+        }
+      }
+
+      // mark started
+      repo.appendRunStep(runId, node.id, 'started', { });
+      // persist waiting state and next wake
+      const nextWake = new Date(Date.now() + Number(delaySeconds) * 1000).toISOString();
+      repo.updateRunState(runId, 'waiting_delay', { next_wake_at: nextWake, current_node_id: node.id });
+      repo.appendRunStep(runId, node.id, 'delay_set', { delaySeconds, nextWake });
+
+      // schedule resume
+      const ms = Math.max(0, Number(delaySeconds) * 1000);
+      console.log(`[executor] Scheduling resume for run ${runId} node ${node.id} nextWake=${nextWake} delaySeconds=${delaySeconds} ms=${ms}`);
+
+      const t = setTimeout(() => {
+        // remove from registry immediately so cleanup doesn't try to clear it again
+        try {
+          const idx = scheduledTimeouts.indexOf(t as any);
+          if (idx >= 0) scheduledTimeouts.splice(idx, 1);
+        } catch {
+          /* ignore errors while removing timeout from registry */
+        }
+
+        // when timeout fires, log and inspect DB then resume processing
+        try {
+          const now = new Date().toISOString();
+          const r = repo.getRun(runId);
+          console.log(`[executor] timeout fired for run ${runId} at ${now} dbState=${r?.state} next_wake_at=${r?.next_wake_at}`);
+        } catch (e) {
+          console.error('[executor] error reading run on timeout', e);
+        }
+
+        processRun(runId).catch(err => console.error('[executor] resume error', err));
+      }, ms);
+      scheduledTimeouts.push(t as any);
+  // allow process to exit if only these timers remain
+  try { (t as any).unref && (t as any).unref(); } catch {}
+
+      return; // stop processing now
+    }
+
+    if (ntype === 'CONDITION' || ntype === 'CONDITIONAL' || ntype === 'CONDITION') {
+      const cond = (node as any).condition;
+      const leftKey = cond?.leftKey ?? cond?.field;
+      const operator = cond?.operator;
+      const rightValue = cond?.rightValue ?? cond?.value;
+      const leftVal = leftKey ? (patientContext as any)[leftKey] : undefined;
+      const result = evalCondition(leftVal, operator, rightValue);
+  // mark started
+  repo.appendRunStep(runId, node.id, 'started', { });
+  repo.updateRunState(runId, 'in_progress', { current_node_id: node.id });
+  repo.appendRunStep(runId, node.id, 'condition_evaluated', { leftKey, leftVal, operator, rightValue, result });
+  currentNodeId = result ? (node as any).trueNext ?? (node as any).on_true_next_node_id : (node as any).falseNext ?? (node as any).on_false_next_node_id;
+  repo.updateRunState(runId, 'in_progress', { current_node_id: currentNodeId });
+      continue;
+    }
+
+    // unknown node type
+    repo.appendRunStep(runId, node.id, 'error', { message: `unknown_node_type:${ntype}` });
+    repo.updateRunState(runId, 'failed', { error: `unknown_node_type:${ntype}` });
+    console.error(`[executor] unknown node type ${ntype} for run ${runId}`);
+    return;
+  }
+
+  if (stepCount >= maxSteps) {
+    repo.updateRunState(runId, 'failed', { error: 'max_steps_exceeded' });
+  repo.appendRunStep(runId, null, 'error', { message: 'max steps exceeded' });
+  console.warn(`[executor] max steps exceeded for run ${runId}`);
+    return;
+  }
+
+  // finished
+  repo.updateRunState(runId, 'completed', { completed_at: nowIso(), current_node_id: null });
+  repo.appendRunStep(runId, null, 'completed', { });
+  console.log(`[executor] run ${runId} completed`);
+}
+
+export async function startRun(runId: string) {
+  // fire-and-forget processing
+  processRun(runId).catch(err => console.error('[executor] startRun error', err));
+}
+
+export function clearScheduledTimeouts() {
+  try {
+    while (scheduledTimeouts.length) {
+      const t = scheduledTimeouts.pop();
+      if (t) clearTimeout(t as any);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+export default { startRun, processRun, clearScheduledTimeouts };

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   journey_id TEXT NOT NULL,
   patient_id TEXT,
+  idempotency_key TEXT,
   state TEXT NOT NULL,
   current_node_id TEXT,
   next_wake_at TEXT,
@@ -36,3 +37,4 @@ CREATE TABLE IF NOT EXISTS run_steps (
 -- indexes for quick lookups
 CREATE INDEX IF NOT EXISTS idx_runs_state_next_wake ON runs(state, next_wake_at);
 CREATE INDEX IF NOT EXISTS idx_run_steps_runid ON run_steps(run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_journey_idempotency ON runs(journey_id, idempotency_key);

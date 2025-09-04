@@ -5,6 +5,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import executor from '../src/services/executor';
+
+// Increase default timeout for tests that schedule timers
+jest.setTimeout(20000);
 
 let app: any;
 let dbFile: string;
@@ -20,12 +24,28 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (app) await app.close();
+  if (app) {
+    // guard close with timeout
+    await Promise.race([
+      app.close(),
+      new Promise((res) => {
+        const t = setTimeout(res, 2000);
+        try { (t as any).unref && (t as any).unref(); } catch {}
+      })
+    ]);
+  }
   try {
     if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
   } catch (e) {
     // ignore
   }
+});
+
+// Always restore real timers after each test to avoid hangs when a test uses fake timers
+afterEach(() => {
+  try { (jest.useRealTimers as any)(); } catch (e) { /* ignore */ }
+  try { (jest.clearAllTimers as any)(); } catch (e) { /* ignore */ }
+  try { (executor as any).clearScheduledTimeouts && (executor as any).clearScheduledTimeouts(); } catch (e) { /* ignore */ }
 });
 
 test('POST /journeys creates a journey and returns id', async () => {
@@ -60,6 +80,7 @@ test('POST /journeys/:journeyId/trigger creates a run and GET returns run and st
   const triggerBody = { requestId: 'req-1', patientId: 'p-1', context: { score: 5 } };
   const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: triggerBody });
   expect(triggerRes.statusCode).toBe(202);
+  expect(triggerRes.headers).toHaveProperty('location');
   const { runId } = JSON.parse(triggerRes.payload);
   expect(runId).toBeTruthy();
 
@@ -81,6 +102,37 @@ test('GET /journeys/runs/:runId returns 404 for missing run', async () => {
   expect(res.statusCode).toBe(404);
   const body = JSON.parse(res.payload);
   expect(body).toHaveProperty('error', 'not_found');
+});
+
+test('manual start flow: create run with start=false then start it explicitly', async () => {
+  const journeyPayload = {
+    name: 'manual-start-test',
+    nodes: [
+      { id: 'n1', type: 'MESSAGE', message: 'manual start message', next: null }
+    ]
+  };
+
+  const createRes = await app.inject({ method: 'POST', url: '/journeys', payload: journeyPayload });
+  expect(createRes.statusCode).toBe(201);
+  const { id: journeyId } = JSON.parse(createRes.payload);
+
+  // trigger with start=false
+  const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger?start=false`, payload: { requestId: 'r1' } });
+  expect(triggerRes.statusCode).toBe(202);
+  const { runId } = JSON.parse(triggerRes.payload);
+  expect(runId).toBeTruthy();
+
+  // start explicitly
+  const startRes = await app.inject({ method: 'POST', url: `/journeys/runs/${runId}/start` });
+  expect(startRes.statusCode).toBe(202);
+
+  // fetch run status eventually contains completed step
+  const statusRes = await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` });
+  expect(statusRes.statusCode).toBe(200);
+  const statusBody = JSON.parse(statusRes.payload);
+  expect(statusBody).toHaveProperty('steps');
+  const hasMessage = statusBody.steps.some((s: any) => s.type === 'message_sent');
+  expect(hasMessage).toBe(true);
 });
 
 test('POST /journeys with invalid payload returns 400 and validation details', async () => {
@@ -134,7 +186,7 @@ test('Stored journey, run and step payloads match what was sent', async () => {
   expect(Array.isArray(stored!.payload.nodes)).toBe(true);
 
   // trigger and validate run stored in repo
-  const trigger = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: { requestId: 'r-123', patientId: 'p-x', context: { a: 1 } } });
+  const trigger = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger?start=false`, payload: { requestId: 'r-123', patientId: 'p-x', context: { a: 1 } } });
   expect(trigger.statusCode).toBe(202);
   const { runId } = JSON.parse(trigger.payload);
 
@@ -149,4 +201,108 @@ test('Stored journey, run and step payloads match what was sent', async () => {
   expect(triggered).toBeTruthy();
   expect(triggered.payload).toHaveProperty('requestId', 'r-123');
   expect(triggered.payload).toHaveProperty('context');
+});
+
+test('Idempotency: repeated triggers with same Idempotency-Key return same run', async () => {
+  const journeyPayload = { name: 'idemp-test', nodes: [{ id: 'n1', type: 'MESSAGE', message: 'hi', next: null }] };
+  const createRes = await app.inject({ method: 'POST', url: '/journeys', payload: journeyPayload });
+  expect(createRes.statusCode).toBe(201);
+  const { id: journeyId } = JSON.parse(createRes.payload);
+
+  const headers = { 'idempotency-key': 'key-123' };
+  const first = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: { requestId: 'r1' }, headers });
+  expect(first.statusCode).toBe(202);
+  const { runId: runA } = JSON.parse(first.payload);
+
+  const second = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: { requestId: 'r1' }, headers });
+  expect(second.statusCode).toBe(202);
+  const { runId: runB } = JSON.parse(second.payload);
+
+  expect(runA).toBe(runB);
+});
+
+test('Executor conditional branch chooses correct path based on context', async () => {
+  const journeyPayload = {
+    name: 'cond-test',
+    nodes: [
+      { id: 'start', type: 'CONDITION', condition: { leftKey: 'flag', operator: '==', rightValue: true }, trueNext: 't', falseNext: 'f' },
+      { id: 't', type: 'MESSAGE', message: 'true branch', next: null },
+      { id: 'f', type: 'MESSAGE', message: 'false branch', next: null }
+    ],
+    startNodeId: 'start'
+  };
+
+  const createRes = await app.inject({ method: 'POST', url: '/journeys', payload: journeyPayload });
+  expect(createRes.statusCode).toBe(201);
+  const { id: journeyId } = JSON.parse(createRes.payload);
+
+  const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: { requestId: 'r1', context: { flag: true } } });
+  expect(triggerRes.statusCode).toBe(202);
+  const { runId } = JSON.parse(triggerRes.payload);
+
+  const statusRes = await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` });
+  const body = JSON.parse(statusRes.payload);
+  const hasTrue = body.steps.some((s: any) => s.type === 'message_sent' && s.payload?.message === 'true branch');
+  expect(hasTrue).toBe(true);
+});
+
+test('Executor handles DELAY by scheduling resume (real timers)', async () => {
+  const journeyPayload = {
+    name: 'delay-test',
+    nodes: [
+      { id: 'n1', type: 'DELAY', delaySeconds: 1, next: 'n2' },
+      { id: 'n2', type: 'MESSAGE', message: 'after delay', next: null }
+    ],
+    startNodeId: 'n1'
+  };
+
+  const createRes = await app.inject({ method: 'POST', url: '/journeys', payload: journeyPayload });
+  expect(createRes.statusCode).toBe(201);
+  const { id: journeyId } = JSON.parse(createRes.payload);
+
+  const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger`, payload: { requestId: 'r-delay' } });
+  expect(triggerRes.statusCode).toBe(202);
+  const { runId } = JSON.parse(triggerRes.payload);
+
+  // After trigger, run should be waiting_delay or in_progress
+  const before = JSON.parse((await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` })).payload);
+  expect(before.run.state === 'waiting_delay' || before.run.state === 'in_progress').toBeTruthy();
+
+  // Wait slightly longer than the delay to allow the scheduled resume to run
+  await new Promise((res) => setTimeout(res, 1500));
+
+  const after = JSON.parse((await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` })).payload);
+  // should have message_sent step
+  const hasMsg = after.steps.some((s: any) => s.type === 'message_sent' && s.payload?.message === 'after delay');
+  expect(hasMsg).toBe(true);
+});
+
+test('Executor max-steps edge: cycles cause failure when maxSteps exceeded', async () => {
+  const journeyPayload = {
+    name: 'cycle-test',
+    nodes: [
+      { id: 'a', type: 'MESSAGE', message: 'a', next: 'b' },
+      { id: 'b', type: 'MESSAGE', message: 'b', next: 'a' }
+    ],
+    startNodeId: 'a'
+  };
+
+  const createRes = await app.inject({ method: 'POST', url: '/journeys', payload: journeyPayload });
+  expect(createRes.statusCode).toBe(201);
+  const { id: journeyId } = JSON.parse(createRes.payload);
+
+  // create run but do not auto-start
+  const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${journeyId}/trigger?start=false`, payload: { requestId: 'cycle' } });
+  expect(triggerRes.statusCode).toBe(202);
+  const { runId } = JSON.parse(triggerRes.payload);
+
+  // manually invoke processRun with small maxSteps
+  await (executor as any).processRun(runId, 5);
+
+  const run = repo.getRun(runId);
+  expect(run.state).toBe('failed');
+  const steps = repo.getRunSteps(runId);
+  const hasError = steps.some((s: any) => s.type === 'error' || (s.type === 'error' && s.payload?.message === 'max steps exceeded'));
+  // at least one error step should be present
+  expect(hasError).toBe(true);
 });
