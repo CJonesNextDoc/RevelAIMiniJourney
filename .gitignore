@@ -1,7 +1,52 @@
-node_modules
-dist
-*.sqlite
-*.sqlite-journal
-coverage
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# TypeScript
+*.tsbuildinfo
+
+# Build output
+dist/
+build/
+out/
+
+# Logs
+*.log
+
+# Environment
 .env
+.env.*
+
+# IDE / editor
+.vscode/
+.idea/
 .DS_Store
+
+# Coverage
+coverage/
+coverage-final.json
+
+# ESLint cache
+.eslintcache
+
+# Test artifacts
+jest-output.json
+
+# SQLite and DB artifacts
+*.sqlite
+*.sqlite3
+*.sqlite.bak
+journeys.sqlite
+journeys.sqlite.bak
+
+# Examples/docs (ignore for now; we can remove this later if we decide to keep docs in repo)
+docs/
+
+# Misc
+.cache/
+.nyc_output/
+*.tgz
