@@ -139,4 +139,44 @@ describe('executor additional branches', () => {
     // only the triggered step should exist (executor should not append new steps)
     expect(steps.length).toBe(1);
   });
+
+  test('journey not found marks run failed and appends error', async () => {
+  // create a real journey and run, then delete the journey row to simulate missing journey
+  const journeyId = repo.createJourney(undefined, 'temp-journey', { nodes: [] });
+  const runId = repo.createRun(journeyId);
+  repo.appendRunStep(runId, null, 'triggered', { context: {} });
+
+  // mock repo.getJourney to simulate missing journey without touching the DB (avoids FK errors)
+  const getJourneyMock = jest.spyOn(repo, 'getJourney').mockReturnValue(null as any);
+
+  await executor.processRun(runId, 10);
+
+  // restore the mock and assert
+  getJourneyMock.mockRestore();
+  const run = repo.getRun(runId);
+  expect(run.state).toBe('failed');
+  const steps = repo.getRunSteps(runId);
+  expect(steps.some((s: any) => s.type === 'error' && s.payload?.message === 'journey not found')).toBeTruthy();
+  });
+
+  test('max_steps_exceeded triggers failure when looped and small maxSteps', async () => {
+    const journey = {
+      id: 'jm-loop',
+      startNodeId: 'loop1',
+      nodes: [
+        { id: 'loop1', type: 'MESSAGE', message: 'x', next: 'loop1' },
+      ],
+    } as any;
+
+    const journeyId = repo.createJourney(undefined, 'loop-journey', journey);
+    const runId = repo.createRun(journeyId);
+    repo.appendRunStep(runId, null, 'triggered', { context: {} });
+
+    await executor.processRun(runId, 1);
+
+    const run = repo.getRun(runId);
+    expect(run.state).toBe('failed');
+    const steps = repo.getRunSteps(runId);
+    expect(steps.some((s: any) => s.type === 'error' && s.payload?.message === 'max steps exceeded')).toBeTruthy();
+  });
 });
