@@ -14,6 +14,14 @@ const config: Config = {
   moduleNameMapper: {
     '^(\\.\\.?/.*)\\.js$': '$1',
   },
+  coverageThreshold: {
+    global: {
+      branches: 72,
+      statements: 90,
+      lines: 95,
+      functions: 85,
+    },
+  },
 };
 
 export default config;

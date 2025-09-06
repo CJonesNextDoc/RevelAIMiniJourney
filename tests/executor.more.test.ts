@@ -179,4 +179,59 @@ describe('executor additional branches', () => {
     const steps = repo.getRunSteps(runId);
     expect(steps.some((s: any) => s.type === 'error' && s.payload?.message === 'max steps exceeded')).toBeTruthy();
   });
+
+  test('noisy executor logs (execLog + execWarn) when NOISY_MAX_STEPS is set', async () => {
+    // Reload modules after setting env so EXECUTOR_VERBOSE is evaluated true at import time
+    const prev = process.env.NOISY_MAX_STEPS;
+    try {
+      jest.resetModules();
+      process.env.NOISY_MAX_STEPS = '1';
+
+  // initialize DB for the fresh module load so getDb() won't throw
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { initDb } = require('../src/plugins/db');
+  initDb(helper.dbFile);
+  // require fresh copies
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const freshRepo = require('../src/db/repo');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const freshExecutorModule = require('../src/services/executor');
+  const freshExecutor = freshExecutorModule.default ? freshExecutorModule.default : freshExecutorModule;
+
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const journey = {
+        id: 'jm-noisy',
+        startNodeId: 'l1',
+        nodes: [ { id: 'l1', type: 'MESSAGE', message: 'loop', next: 'l1' } ],
+      } as any;
+
+      const journeyId = freshRepo.createJourney(undefined, 'noisy-journey', journey);
+      const runId = freshRepo.createRun(journeyId);
+      freshRepo.appendRunStep(runId, null, 'triggered', { context: {} });
+
+      await freshExecutor.processRun(runId, 1);
+
+      expect(logSpy).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalled();
+
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    } finally {
+      if (prev === undefined) delete process.env.NOISY_MAX_STEPS; else process.env.NOISY_MAX_STEPS = prev;
+      jest.resetModules();
+    }
+  });
+
+  test('startRun handles missing run gracefully', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    executor.startRun('i-do-not-exist');
+    // wait for the async fire-and-forget to run
+    await new Promise((r) => setImmediate(r));
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('run not found'));
+    errSpy.mockRestore();
+  });
 });
