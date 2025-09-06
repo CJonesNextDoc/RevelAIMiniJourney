@@ -1,0 +1,18 @@
+{
+  "name": "HOOS / KOOS survey prompt",
+  "startNodeId": "n1",
+  "nodes": [
+    { "id": "n1", "type": "MESSAGE", "message": "Welcome! We'll pick the right survey next.", "next": "n2" },
+    { "id": "n2", "type": "DELAY", "delaySeconds": 3, "next": "n3" },
+    {
+      "id": "n3",
+      "type": "CONDITION",
+      "condition": { "leftKey": "condition", "operator": "==", "rightValue": "hip_replacement" },
+      "trueNext": "n4a",
+      "falseNext": "n4b"
+    },
+    { "id": "n4a", "type": "MESSAGE", "message": "[HOOS] This questionnaire asks about your hip and how you are doing with daily activities. Please answer every question by choosing one option. If you’re not sure, pick the answer that fits best. There are no right or wrong answers—please answer based on your experience in the last week.", "next": null },
+    { "id": "n4b", "type": "MESSAGE", "message": "[KOOS] This questionnaire asks about your knee and how you are doing with daily activities. Please answer every question by choosing one option. If you’re not sure, pick the answer that fits best. There are no right or wrong answers—please answer based on your experience in the last week.", "next": null }
+  ],
+  "metadata": { "owner": "demo" }
+}
