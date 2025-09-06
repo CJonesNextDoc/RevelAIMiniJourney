@@ -4,6 +4,7 @@ const config: Config = {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
   roots: ['<rootDir>/tests'],
+  setupFilesAfterEnv: ['<rootDir>/tests/setupTests.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   transform: {

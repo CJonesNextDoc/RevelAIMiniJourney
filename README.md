@@ -78,3 +78,40 @@ npm run test:watch
 ```
 
 If you run into PowerShell quoting issues when using raw `curl`, prefer `Invoke-RestMethod` or `curl.exe` (not the PowerShell alias) — the tests exercise the API directly and are a stable way to validate behavior.
+
+## Testing & debugging notes
+
+- Verbose logs: the executor and repo components can be noisy during troubleshooting. Two environment flags control runtime verbosity:
+	- `NOISY_MAX_STEPS=1` — enables verbose executor logs (useful when debugging delay/resume and max-steps behavior).
+	- `NOISY_REPO=1` — enables verbose DB/repo logs (shows updateRunState, appendRunStep, claimRunForProcessing details).
+
+	Example (PowerShell):
+	```powershell
+	$env:NOISY_MAX_STEPS=1; $env:NOISY_REPO=1; npx.cmd jest -i --colors
+	```
+
+- Centralized test cleanup: tests use a shared setup file `tests/setupTests.ts` which automatically runs after each test and:
+	- restores real timers (calls `jest.useRealTimers()`)
+	- clears pending timers (`jest.clearAllTimers()`)
+	- clears any scheduled executor timeouts (`executor.clearScheduledTimeouts()`)
+
+	This helps avoid Jest open-handle warnings and reduces flakiness caused by leaked timeouts. If you add new tests that spawn timers, ensure they either use `jest.useFakeTimers()` with explicit advances, or let the shared cleanup clear timers after each test.
+
+	### Useful npm test scripts
+
+	- Run the full test suite (CI-friendly):
+		```bash
+		npm run test:ci
+		```
+
+	- Run a single test file (fast):
+		```bash
+		npm run test:single -- tests/integration.hip.test.ts
+		```
+
+	- Run a single test by name (regex match):
+		```bash
+		npm run test:single -- -t "POST /journeys/:journeyId/trigger with invalid body returns 400"
+		```
+
+
