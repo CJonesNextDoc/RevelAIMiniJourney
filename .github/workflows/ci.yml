@@ -29,5 +29,8 @@ jobs:
         run: npm run lint || true
         continue-on-error: true
 
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
+
       - name: Run tests
         run: npm run test:ci
