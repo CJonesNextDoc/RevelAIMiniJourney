@@ -114,4 +114,97 @@ If you run into PowerShell quoting issues when using raw `curl`, prefer `Invoke-
 		npm run test:single -- -t "POST /journeys/:journeyId/trigger with invalid body returns 400"
 		```
 
+## Deliverables
+
+When you submit this project please include the following items:
+
+1. Loom video link (add your video URL here):
+
+	- Webcam + screen recording of you coding and explaining decisions.
+	- Place the public Loom link below when ready.
+
+	Loom URL: <PASTE_YOUR_LOOM_LINK_HERE>
+
+2. Source repository
+
+	- Git repository has a clear commit history that reflects the development process.
+
+3. README checklist (this section)
+
+	- Setup and run instructions (above).
+	- Test instructions (above).
+	- Implementation overview, design choices, assumptions and limitations: add a short paragraph below.
+
+	Implementation notes (add your summary here):
+
+	- Summary: small Fastify + TypeScript orchestration engine with MESSAGE/DELAY/CONDITION nodes. Runs and steps persisted to SQLite. Executor uses in-process timers for DELAY and a DB-backed poller for durable resume.
+	- Design choices: persistent run state in SQLite, synchronous repo for simplicity, Zod for input validation, Jest tests with per-test DB files.
+	- Assumptions & limitations: single-process timers are not durable; we provide a poller to resume delayed runs. For scale, BullMQ/Redis is recommended (see `docs/bullmq-migration-plan.md`).
+
+4. Optional demo GIF or short screen recording
+
+	- You can embed a small GIF or screenshot here showing an API call sequence (or link it). This is optional but helpful.
+
+5. Anything else you'd like reviewers to see (e.g., CI link, coverage report):
+
+	- Coverage report is available in `coverage/lcov-report/index.html` after running `npm test`.
+
+## Demo visualization test
+
+There's a small demo test that prints a sample journey JSON, the trigger payload (patient context), and a concise per-step execution summary so reviewers can quickly see expected behavior.
+
+Run it locally:
+
+PowerShell / cmd:
+```bash
+npm run test:single -- tests/demo.visualize.test.ts
+```
+
+Expected console output format (trimmed):
+
+```
+=== DEMO: Journey JSON ===
+{ ...journey JSON... }
+
+=== DEMO: Trigger Payload ===
+{ "requestId": "demo-req-1", "patientId": "demo-p1", "context": { "score": 75 } }
+
+=== DEMO: Execution Steps Summary ===
+#1 node=start type=message_sent payload={...}
+#2 node=cond type=condition_evaluated payload={...}
+#3 node=high type=message_sent payload={...}
+
+=== DEMO: Run summary ===
+runId=... state=completed currentNodeId=
+```
+
+This is useful for reviewers who want to run a single script and immediately inspect node-level outputs without digging into the DB tables.
+
+## Example runner script
+
+There's a small example runner at `scripts/run_example.ts` that loads a journey JSON and trigger JSON from `examples/` and runs it while printing step progress.
+
+Run it (uses `tsx` to execute the TypeScript script):
+
+```bash
+npm run demo -- --journey examples/journeys/example_journey.json --trigger examples/triggers/example_trigger_hip.json
+```
+
+This script prints periodic run state updates and then the final run steps when the run completes — useful for manual demos.
+
+You can reduce console noise and optionally save the final run output to a file:
+
+```bash
+# quieter (only prints state changes) and write final run to out.json
+npm run demo -- --journey examples/journeys/example_journey.json --trigger examples/triggers/example_trigger_hip.json --quiet=true --out demo_output.json
+```
+
+To produce a human-friendly text summary (with ANSI colors) alongside the JSON output, pass `--pretty=true` or write to a `.txt` filename. The script writes a JSON file and a pretty `.txt` file next to it.
+
+```bash
+# write JSON and a pretty text summary (demo_output.json and demo_output.json.txt)
+npm run demo -- --journey examples/journeys/example_journey.json --trigger examples/triggers/example_trigger_hip.json --quiet=true --out demo_output.json --pretty=true
+```
+
+
 
