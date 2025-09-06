@@ -16,6 +16,9 @@ const DEFAULT_MAX_STEPS = 1000;
 // registry for scheduled timeouts so tests can cancel them and avoid callbacks running after teardown
 const scheduledTimeouts: NodeJS.Timeout[] = [];
 
+// Poller handle for background recovery of delayed runs (durable wake-up)
+let pollerHandle: NodeJS.Timeout | null = null;
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -263,6 +266,34 @@ export function clearScheduledTimeouts() {
     if (t) clearTimeout(t);
   }
   scheduledTimeouts.length = 0; // fast clear
+}
+
+// Poller: periodically find ready runs (queued or waiting_delay where next_wake_at <= now)
+export function startPoller(intervalMs = 5000, batch = 100) {
+  if (pollerHandle) return; // already running
+  pollerHandle = setInterval(async () => {
+    try {
+      const rows: any[] = repo.findReadyRuns(batch);
+      for (const r of rows) {
+        try {
+          // attempt to start the run; startRun will claim it atomically
+          startRun(r.id);
+        } catch (e) {
+          console.error('[executor.poller] failed to start run', r.id, e);
+        }
+      }
+    } catch (e) {
+      console.error('[executor.poller] error during poll', e);
+    }
+  }, intervalMs);
+  (pollerHandle as any).unref?.();
+}
+
+export function stopPoller() {
+  if (pollerHandle) {
+    clearInterval(pollerHandle);
+    pollerHandle = null;
+  }
 }
 
 export default { startRun, processRun, clearScheduledTimeouts };
