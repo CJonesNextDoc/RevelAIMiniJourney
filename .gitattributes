@@ -1,1 +1,28 @@
 * text=auto eol=lf
+
+# Explicit text files (ensure LF in repo)
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+
+# Binary files — do not attempt to normalize
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.svg binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.sqlite binary
+*.sqlite3 binary
+*.db binary
+
+# Ensure PDFs in docs are treated as binary
+docs/**.pdf binary

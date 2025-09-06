@@ -1,6 +1,16 @@
+/**
+ * src/types/journey.ts (types + Zod)
+ * - Defines: Node schemas (MESSAGE, DELAY, CONDITION) and Journey shape.
+ * - Operators: == != > >= < <= (runtime-validated via Zod enum).
+ * - Context: PatientContext is a simple key->primitive map.
+ * - Start Node: optional startNodeId, else first node in array is used.
+ * - Usage: parseJourney() to validate input at the edge.
+ */
+
 import { z } from 'zod';
 
 // Operators supported by condition nodes
+// NOTE: Operator whitelist avoids unsafe/eval-style checks
 export const OperatorEnum = z.enum(['==', '!=', '>', '>=', '<', '<=']);
 export type Operator = z.infer<typeof OperatorEnum>;
 
@@ -12,7 +22,7 @@ export type PatientContext = z.infer<typeof PatientContextSchema>;
 export const NodeTypeEnum = z.enum(['MESSAGE', 'DELAY', 'CONDITION']);
 export type NodeType = z.infer<typeof NodeTypeEnum>;
 
-// MESSAGE node: simple message to be delivered (stubbed by console.log by the executor)
+// MESSAGE node: simple message to be delivered (stubbed via console.log by the executor)
 export const MessageNodeSchema = z.object({
   id: z.string(),
   type: z.literal('MESSAGE'),
@@ -57,6 +67,7 @@ export const ConditionNodeSchema = z.object({
 export type ConditionNode = z.infer<typeof ConditionNodeSchema>;
 
 // Discriminated union of nodes
+// Discriminated union lets TS/Narrowing pick schema by `type`
 export const NodeSchema = z.discriminatedUnion('type', [
   MessageNodeSchema,
   DelayNodeSchema,

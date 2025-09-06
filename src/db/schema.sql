@@ -1,3 +1,8 @@
+-- src/db/schema.sql
+-- - Journeys store JSON payloads; runs store orchestration state; run_steps are the audit trail.
+-- - Idempotency: unique index (journey_id, idempotency_key).
+-- - next_wake_at: enables deterministic resume after DELAY.
+
 -- journeys table stores the journey definitions
 CREATE TABLE IF NOT EXISTS journeys (
   id TEXT PRIMARY KEY,

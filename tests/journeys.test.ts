@@ -1,22 +1,26 @@
+/**
+ * === REVIEW ANNOTATIONS: journeys.test.ts (E2E and unit-adjacent) ===
+ * - Covers: bad bodies/params, idempotency, delay resume, and max-steps failure.
+ * - Technique: Fastify app.inject for route tests; real repo operations.
+ * - Timing: waits slightly > delay to allow setTimeout to fire.
+ * - Branching: asserts condition-driven path behavior.
+ */
+
 import buildApp from '../src/app';
 import journeysRoutes from '../src/routes/journeys';
 import * as repo from '../src/db/repo';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { createTempDbAndInit } from './utils/dbHelper';
 import executor from '../src/services/executor';
 
 // Increase default timeout for tests that schedule timers
 jest.setTimeout(20000);
 
 let app: any;
-let dbFile: string;
+let dbCleanup: (() => Promise<void>) | null = null;
 
 beforeAll(async () => {
-  dbFile = path.join(os.tmpdir(), `revelai-test-${uuidv4()}.sqlite`);
-  // initialize repository with a temporary sqlite file (schema will be applied)
-  repo.initRepository(dbFile);
+  const tmp = createTempDbAndInit();
+  dbCleanup = tmp.cleanup;
 
   app = buildApp();
   app.register(journeysRoutes);
@@ -29,15 +33,13 @@ afterAll(async () => {
     await Promise.race([
       app.close(),
       new Promise((res) => {
-        const t = setTimeout(res, 2000);
-        try { (t as any).unref && (t as any).unref(); } catch {}
+    const t = setTimeout(res, 2000);
+    try { (t as any).unref && (t as any).unref(); } catch (e) { /* ignore */ }
       })
     ]);
   }
-  try {
-    if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
-  } catch (e) {
-    // ignore
+  if (dbCleanup) {
+    try { await dbCleanup(); } catch (e) { /* ignore */ }
   }
 });
 
@@ -266,6 +268,7 @@ test('Executor handles DELAY by scheduling resume (real timers)', async () => {
 
   // After trigger, run should be waiting_delay or in_progress
   const before = JSON.parse((await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` })).payload);
+  // State should be waiting_delay (if delay node) or in_progress (fast paths)
   expect(before.run.state === 'waiting_delay' || before.run.state === 'in_progress').toBeTruthy();
 
   // Wait slightly longer than the delay to allow the scheduled resume to run
@@ -277,6 +280,15 @@ test('Executor handles DELAY by scheduling resume (real timers)', async () => {
   expect(hasMsg).toBe(true);
 });
 
+// This test intentionally exercises the executor's safety guard which logs a warning
+// when the max-steps limit is exceeded. By default we suppress that console.warn to
+// keep test output clean. To run this single test in "noisy" (verbose) mode and see
+// the warning, set the env var NOISY_MAX_STEPS=1 and run Jest for this test only, e.g.: 
+//
+//   NOISY_MAX_STEPS=1 npx.cmd jest -t "Executor max-steps edge: cycles cause failure when maxSteps exceeded"
+//
+// On Windows PowerShell you can set the env var for the command like:
+//   $env:NOISY_MAX_STEPS=1; npx.cmd jest -t "Executor max-steps edge: cycles cause failure when maxSteps exceeded"
 test('Executor max-steps edge: cycles cause failure when maxSteps exceeded', async () => {
   const journeyPayload = {
     name: 'cycle-test',
@@ -297,7 +309,19 @@ test('Executor max-steps edge: cycles cause failure when maxSteps exceeded', asy
   const { runId } = JSON.parse(triggerRes.payload);
 
   // manually invoke processRun with small maxSteps
-  await (executor as any).processRun(runId, 5);
+  // Directly invoke engine with low maxSteps to simulate cycle protection
+  // Suppress the console.warn emitted by the executor during this expected failure
+  // unless NOISY_MAX_STEPS=1 is set in the environment.
+  let warnSpy: jest.SpyInstance | undefined;
+  const noisy = !!process.env.NOISY_MAX_STEPS;
+  if (!noisy) {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  }
+  try {
+    await (executor as any).processRun(runId, 5);
+  } finally {
+    if (warnSpy) warnSpy.mockRestore();
+  }
 
   const run = repo.getRun(runId);
   expect(run.state).toBe('failed');

@@ -34,3 +34,14 @@ export function getDb() {
 }
 
 export default initDb;
+
+// Close the database connection if it's open. Tests can call this in global teardown.
+export function closeDb() {
+  try {
+    if (db && typeof (db as any).close === 'function') {
+      (db as any).close();
+    }
+  } finally {
+    db = null;
+  }
+}
