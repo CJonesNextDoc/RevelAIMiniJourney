@@ -12,6 +12,7 @@
   "typecheck": "tsc --noEmit",
   "prepare": "husky install",
   "start": "node dist/index.js",
+  "demo": "tsx scripts/run_example.ts",
   "test": "jest --runInBand",
   "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --ext .ts",
   "test:ci": "jest --runInBand --colors",
