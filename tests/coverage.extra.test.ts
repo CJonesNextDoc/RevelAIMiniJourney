@@ -4,11 +4,17 @@ import executor from '../src/services/executor';
 import buildApp from '../src/app';
 import journeysRoutes from '../src/routes/journeys';
 
-// Keep tests isolated and able to clean timers
+// Keep tests isolated and able to clean timers and suppress expected console.error
+let _errSpy: jest.SpyInstance | undefined;
+beforeEach(() => {
+  _errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+});
+
 afterEach(async () => {
   try { (jest.useRealTimers as any)(); } catch (e) { /* ignore */ }
   try { (jest.clearAllTimers as any)(); } catch (e) { /* ignore */ }
   try { (executor as any).clearScheduledTimeouts && (executor as any).clearScheduledTimeouts(); } catch (e) { /* ignore */ }
+  try { _errSpy && _errSpy.mockRestore(); } catch (e) { /* ignore */ }
 });
 
 describe('coverage extras: executor/operator branches and route header', () => {
@@ -141,6 +147,62 @@ describe('coverage extras: executor/operator branches and route header', () => {
       const status = await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` });
       const body = JSON.parse(status.payload);
       expect(body.run.state).toBe('queued');
+    } finally {
+      try { if (app) await app.close(); } catch (e) { /* ignore */ }
+      try { await tmp.cleanup(); } catch (e) { /* ignore */ }
+    }
+  });
+
+  test('GET /journeys/runs/:runId exposes top-level summary fields', async () => {
+    const tmp = createTempDbAndInit('cov-summary');
+    let app: any;
+    try {
+      app = buildApp();
+      app.register(journeysRoutes);
+      await app.ready();
+
+      const payload = { name: 'summary-test', nodes: [{ id: 'n1', type: 'MESSAGE', message: 'hi', next: null }] };
+      const createRes = await app.inject({ method: 'POST', url: '/journeys', payload });
+      expect(createRes.statusCode).toBe(201);
+      const { id: jid } = JSON.parse(createRes.payload);
+
+      const triggerRes = await app.inject({ method: 'POST', url: `/journeys/${jid}/trigger?start=false`, payload: { requestId: 's1' } });
+      expect(triggerRes.statusCode).toBe(202);
+      const { runId } = JSON.parse(triggerRes.payload);
+
+      const statusRes = await app.inject({ method: 'GET', url: `/journeys/runs/${runId}` });
+      expect(statusRes.statusCode).toBe(200);
+      const body = JSON.parse(statusRes.payload);
+
+      expect(body).toHaveProperty('runId', runId);
+      expect(body).toHaveProperty('status');
+      expect(body).toHaveProperty('currentNodeId');
+      expect(body).toHaveProperty('patientContext');
+
+      // backward-compat: still include run and steps
+      expect(body).toHaveProperty('run');
+      expect(body).toHaveProperty('steps');
+    } finally {
+      try { if (app) await app.close(); } catch (e) { /* ignore */ }
+      try { await tmp.cleanup(); } catch (e) { /* ignore */ }
+    }
+  });
+
+  test('POST /journeys returns journeyId (backward-compatible with id)', async () => {
+    const tmp = createTempDbAndInit('cov-create');
+    let app: any;
+    try {
+      app = buildApp();
+      app.register(journeysRoutes);
+      await app.ready();
+
+      const payload = { name: 'create-test', nodes: [{ id: 'n1', type: 'MESSAGE', message: 'hi', next: null }] };
+      const res = await app.inject({ method: 'POST', url: '/journeys', payload });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveProperty('journeyId');
+      expect(body).toHaveProperty('id');
+      expect(body.journeyId).toBe(body.id);
     } finally {
       try { if (app) await app.close(); } catch (e) { /* ignore */ }
       try { await tmp.cleanup(); } catch (e) { /* ignore */ }

@@ -27,10 +27,10 @@ const JourneysRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) {
       return reply.status(400).send({ error: 'invalid_payload', details: parsed.error.format() });
     }
-    // Validated payload, create the journey
-    const id = repo.createJourney(undefined, parsed.data.name, parsed.data, parsed.data.metadata);
-    // send back the created journey ID
-    return reply.status(201).send({ id });
+  // Validated payload, create the journey
+  const id = repo.createJourney(undefined, parsed.data.name, parsed.data, parsed.data.metadata);
+  // send back the created journey ID; include both keys for backward compatibility
+  return reply.status(201).send({ journeyId: id, id });
   });
 
   // ROUTE: trigger a run (auto-start unless disabled)
@@ -97,7 +97,21 @@ const JourneysRoutes: FastifyPluginAsync = async (app) => {
     if (!run) return reply.status(404).send({ error: 'not_found' }); // unable to fetch
 
     const steps = repo.getRunSteps(params.data.runId); // able to fetch run steps
-    return reply.send({ run, steps });
+
+    // Derive a small patientContext for convenience: use the 'triggered' step if present
+    const triggered = steps.find((s: any) => s.type === 'triggered');
+    const patientContext = triggered && triggered.payload && triggered.payload.context ? triggered.payload.context : {};
+
+    // Surface a compact summary (runId, status, currentNodeId, patientContext) while
+    // preserving the original `run` and `steps` objects for backward compatibility.
+    return reply.send({
+      runId: run.id,
+      status: run.state,
+      currentNodeId: run.current_node_id ?? null,
+      patientContext,
+      run,
+      steps,
+    });
   });
 };
 
