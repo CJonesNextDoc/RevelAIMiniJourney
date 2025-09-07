@@ -123,6 +123,9 @@ When you submit this project please include the following items:
 	- Loom URL for Development Process: 
     <https://www.loom.com/share/c03b7e15e96d4e8c9af49933910a60ca?sid=153c1e88-c571-4381-85e8-e4260b9f6f3d>
     
+	For more comprehensive visibility into how the AI-assisted development proceeded, see the conversation here summarized for efficient review:
+	- [Summarized AI interaction transcript](docs/Summarized-RevelAI-ChatCPT-5.md)
+    
 
 2. Source repository
 
