@@ -44,7 +44,7 @@ journeys.sqlite
 journeys.sqlite.bak
 
 # Examples/docs (ignore for now; we can remove this later if we decide to keep docs in repo)
-docs/
+docs/ignore/
 
 # Misc
 .cache/
