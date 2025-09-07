@@ -120,22 +120,21 @@ When you submit this project please include the following items:
 
 1. Loom video link (add your video URL here):
 
-	- Webcam + screen recording of you coding and explaining decisions.
-	- Place the public Loom link below when ready.
-
-	Loom URL: <PASTE_YOUR_LOOM_LINK_HERE>
+	- Loom URL for Development Process: 
+    <https://www.loom.com/share/c03b7e15e96d4e8c9af49933910a60ca?sid=153c1e88-c571-4381-85e8-e4260b9f6f3d>
+    
 
 2. Source repository
 
-	- Git repository has a clear commit history that reflects the development process.
+	- Clear commit history that reflects the development process.
 
 3. README checklist (this section)
 
 	- Setup and run instructions (above).
 	- Test instructions (above).
-	- Implementation overview, design choices, assumptions and limitations: add a short paragraph below.
+	- Implementation overview, design choices, assumptions and limitations
 
-	Implementation notes (add your summary here):
+	Implementation notes:
 
 	- Summary: small Fastify + TypeScript orchestration engine with MESSAGE/DELAY/CONDITION nodes. Runs and steps persisted to SQLite. Executor uses in-process timers for DELAY and a DB-backed poller for durable resume.
 	- Design choices: persistent run state in SQLite, synchronous repo for simplicity, Zod for input validation, Jest tests with per-test DB files.
@@ -143,11 +142,42 @@ When you submit this project please include the following items:
 
 4. Optional demo GIF or short screen recording
 
-	- You can embed a small GIF or screenshot here showing an API call sequence (or link it). This is optional but helpful.
+	- Short screen recording API demo with endpoint testing via Postman:
+    <https://www.loom.com/share/1eac860e9e1347648779af5a3f524f20?sid=5cffa20f-ae19-43c9-b709-de899a2d9e51>
+    
+    - Short screen recording demo of a HOOS/KOOS survey journey via Postman:
+    <https://www.loom.com/share/3492a592a2e84d55963fe28ab2f1b34e?sid=f62f0f07-51f8-4adf-a29b-82e6e80b07d0>
+    
 
 5. Anything else you'd like reviewers to see (e.g., CI link, coverage report):
 
-	- Coverage report is available in `coverage/lcov-report/index.html` after running `npm test`.
+	- Coverage report is available after running `npm run test -- --coverage`.
+    Latest: 2025-09-06
+    --------------|---------|----------|---------|---------|----------------------------------------------
+    File          | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+    --------------|---------|----------|---------|---------|----------------------------------------------
+    All files     |   92.85 |    81.29 |   90.19 |   95.49 | 
+    src           |     100 |      100 |     100 |     100 | 
+    app.ts        |     100 |      100 |     100 |     100 | 
+    src/db        |    96.1 |    81.25 |     100 |     100 | 
+    repo.ts       |    96.1 |    81.25 |     100 |     100 | 25,72,81,95-116
+    src/plugins   |   89.65 |       75 |     100 |   96.15 | 
+    db.ts         |   89.65 |       75 |     100 |   96.15 | 25
+    src/routes    |   93.33 |    82.14 |     100 |     100 | 
+    journeys.ts   |   93.33 |    82.14 |     100 |     100 | 43-44,77-94
+    src/services  |   90.76 |    80.72 |   81.81 |      92 | 
+    executor.ts   |   90.76 |    80.72 |   81.81 |      92 | 51,58-63,218,227-232,317-321,362-364,367-368
+    src/types     |    92.3 |      100 |       0 |    92.3 | 
+    journey.ts    |    92.3 |      100 |       0 |    92.3 | 93
+    tests/utils   |     100 |      100 |     100 |     100 | 
+    dbHelper.ts   |     100 |      100 |     100 |     100 | 
+    --------------|---------|----------|---------|---------|----------------------------------------------
+
+    Test Suites: 16 passed, 16 total
+    Tests:       45 passed, 45 total
+    Snapshots:   0 total
+    Time:        21.673 s
+    Ran all test suites.
 
 ## Demo visualization test
 
