@@ -126,6 +126,10 @@ When you submit this project please include the following items:
 	For more comprehensive visibility into how the AI-assisted development proceeded, see the conversation here summarized for efficient review:
 	- [Summarized AI interaction transcript](docs/Summarized-RevelAI-ChatCPT-5.md)
     
+	Also see the original prompt that seeded this project:
+
+	- [Initial project prompt (AI seed)](docs/specs/2025-09-03-revelai-mini-journey-initial-prompt.md)
+    
 
 2. Source repository
 
