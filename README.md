@@ -154,10 +154,8 @@ When you submit this project please include the following items:
     
     - Short screen recording demo of a HOOS/KOOS survey journey via Postman:
     <https://www.loom.com/share/3492a592a2e84d55963fe28ab2f1b34e?sid=f62f0f07-51f8-4adf-a29b-82e6e80b07d0>
-    
 
-
-5. Anything else you'd like reviewers to see (e.g., CI link, coverage report):
+5. Miscellaneous items of interest:
 
 	- CI (GitHub Actions): https://github.com/CJonesNextDoc/RevelAIMiniJourney/actions (workflow: `.github/workflows/ci.yml`)
 
