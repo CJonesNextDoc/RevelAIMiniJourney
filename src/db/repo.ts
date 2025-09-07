@@ -117,8 +117,30 @@ export function getRunSteps(runId: string) {
 }
 
 // Polling: find runs that are queued or waiting_delay and ready to run (next_wake_at <= now OR next_wake_at IS NULL)
-export function findReadyRuns(limit = 100) {
-  const rows = db().prepare(`SELECT * FROM runs WHERE state IN ('queued','waiting_delay') AND (next_wake_at IS NULL OR next_wake_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) ORDER BY created_at ASC LIMIT ?`).all(limit);
+/**
+ * Find runs that are ready to process.
+ *
+ * Important: next_wake_at is authoritative and stored as an ISO timestamp.
+ * To avoid mismatches between SQLite's strftime() output and JavaScript's
+ * Date.toISOString() (which includes fractional seconds), callers should pass
+ * a JS-generated ISO timestamp. This keeps comparisons consistent and avoids
+ * subtle string/lexicographic mismatches when milliseconds are present.
+ *
+ * The function accepts an optional `nowIso` parameter for deterministic
+ * testing; if not provided we use the current JS time (UTC ISO string).
+ */
+export function findReadyRuns(limit = 100, nowIso?: string) {
+  const now = nowIso ?? new Date().toISOString();
+  // Use a parameterized comparison against JS-produced ISO timestamp so both
+  // sides of the comparison use the same format (including milliseconds).
+  const stmt = db().prepare(`
+    SELECT * FROM runs
+    WHERE state IN ('queued','waiting_delay')
+      AND (next_wake_at IS NULL OR next_wake_at <= ?)
+    ORDER BY created_at ASC
+    LIMIT ?
+  `);
+  const rows = stmt.all(now, limit);
   return rows;
 }
 
