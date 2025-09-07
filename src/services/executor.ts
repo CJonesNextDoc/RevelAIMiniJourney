@@ -13,8 +13,9 @@ import { Journey, Node, PatientContext } from '../types/journey';
 // 1. Guardrails & knobs
 const DEFAULT_MAX_STEPS = 1000;
 
-// registry for scheduled timeouts so tests can cancel them and avoid callbacks running after teardown
-const scheduledTimeouts: NodeJS.Timeout[] = [];
+// registry for scheduled timeouts keyed by runId so we can clear timers for a specific run
+// (avoids leaving orphaned timeouts when a run completes or is failed)
+const scheduledTimeouts: Map<string, NodeJS.Timeout> = new Map();
 
 // Poller handle for background recovery of delayed runs (durable wake-up)
 let pollerHandle: NodeJS.Timeout | null = null;
@@ -48,6 +49,18 @@ function evalCondition(left: any, operator: string, right: any) {
       return left <= right;
     default:
       return false;
+  }
+}
+
+function clearScheduledTimeoutForRun(runId: string) {
+  const t = scheduledTimeouts.get(runId);
+  if (t) {
+    try {
+      clearTimeout(t as any);
+    } catch (e) {
+      /* ignore */
+    }
+    scheduledTimeouts.delete(runId);
   }
 }
 
@@ -94,8 +107,9 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
   // Load journey definition (repo returns a row with parsed payload)
   const journeyRow: any = repo.getJourney(run.journey_id);
   if (!journeyRow) {
-    repo.updateRunState(runId, 'failed', { error: 'journey_not_found' });
-    repo.appendRunStep(runId, null, 'error', { message: 'journey not found' });
+  repo.updateRunState(runId, 'failed', { error: 'journey_not_found' });
+  repo.appendRunStep(runId, null, 'error', { message: 'journey not found' });
+  clearScheduledTimeoutForRun(runId);
     return;
   }
 
@@ -133,6 +147,7 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
       repo.updateRunState(runId, 'failed', { error: `node_not_found:${currentNodeId}` });
       repo.appendRunStep(runId, currentNodeId, 'error', { message: 'node not found' });
       console.error(`[executor] node not found ${currentNodeId} for run ${runId}`);
+  clearScheduledTimeoutForRun(runId);
       return;
     }
 
@@ -190,8 +205,7 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
 
       const t = setTimeout(() => {
         // remove from registry immediately so cleanup doesn't try to clear it again
-        const idx = scheduledTimeouts.findIndex((h) => h === t);
-        if (idx !== -1) scheduledTimeouts.splice(idx, 1);
+        scheduledTimeouts.delete(runId);
 
         // when timeout fires, log and inspect DB then resume processing
         try {
@@ -206,7 +220,18 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
 
         processRun(runId).catch((err) => console.error('[executor] resume error', err));
       }, ms);
-      scheduledTimeouts.push(t as any);
+
+      // clear any existing timer for this run (defensive) then register the new one
+      const prev = scheduledTimeouts.get(runId);
+      if (prev) {
+        try {
+          clearTimeout(prev as any);
+        } catch (e) {
+          /* ignore */
+        }
+        scheduledTimeouts.delete(runId);
+      }
+      scheduledTimeouts.set(runId, t as any);
 
       // allow process to exit if only these timers remain
       (t as any).unref?.();
@@ -234,12 +259,13 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
       continue;
     }
 
-    // FAIL
-    // unknown node type
-    repo.appendRunStep(runId, node.id, 'error', { message: `unknown_node_type:${ntype}` });
-    repo.updateRunState(runId, 'failed', { error: `unknown_node_type:${ntype}` });
-    console.error(`[executor] unknown node type ${ntype} for run ${runId}`);
-    return;
+  // FAIL
+  // unknown node type
+  repo.appendRunStep(runId, node.id, 'error', { message: `unknown_node_type:${ntype}` });
+  repo.updateRunState(runId, 'failed', { error: `unknown_node_type:${ntype}` });
+  console.error(`[executor] unknown node type ${ntype} for run ${runId}`);
+  clearScheduledTimeoutForRun(runId);
+  return;
   }
 
   // SAFETY: Hard stop to prevent infinite loops due to cycles or bad next pointers.
@@ -247,12 +273,14 @@ async function processRun(runId: string, maxSteps = DEFAULT_MAX_STEPS) {
     repo.updateRunState(runId, 'failed', { error: 'max_steps_exceeded' });
     repo.appendRunStep(runId, null, 'error', { message: 'max steps exceeded' });
     execWarn(`[executor] max steps exceeded for run ${runId}`);
+  clearScheduledTimeoutForRun(runId);
     return;
   }
 
   // finished
   repo.updateRunState(runId, 'completed', { completed_at: nowIso(), current_node_id: null });
   repo.appendRunStep(runId, null, 'completed', {});
+  clearScheduledTimeoutForRun(runId);
   execLog(`[executor] run ${runId} completed`);
 }
 
@@ -262,10 +290,14 @@ export async function startRun(runId: string) {
 }
 
 export function clearScheduledTimeouts() {
-  for (const t of scheduledTimeouts) {
-    if (t) clearTimeout(t);
+  for (const t of scheduledTimeouts.values()) {
+    try {
+      if (t) clearTimeout(t as any);
+    } catch (e) {
+      /* ignore */
+    }
   }
-  scheduledTimeouts.length = 0; // fast clear
+  scheduledTimeouts.clear();
 }
 
 // Poller: periodically find ready runs (queued or waiting_delay where next_wake_at <= now)
@@ -273,7 +305,10 @@ export function startPoller(intervalMs = 5000, batch = 100) {
   if (pollerHandle) return; // already running
   pollerHandle = setInterval(async () => {
     try {
-      const rows: any[] = repo.findReadyRuns(batch);
+      // Use JS-produced ISO timestamp for comparisons to match how next_wake_at is written
+      // by the executor. Passing the `now` explicitly avoids subtle mismatches when
+      // next_wake_at contains fractional seconds.
+      const rows: any[] = repo.findReadyRuns(batch, nowIso());
       for (const r of rows) {
         try {
           // attempt to start the run; startRun will claim it atomically
@@ -293,6 +328,47 @@ export function stopPoller() {
   if (pollerHandle) {
     clearInterval(pollerHandle);
     pollerHandle = null;
+  }
+}
+// Best-effort cleanup on process shutdown so tests and short-lived processes
+// don't get stuck with timer handles left behind.
+function _shutdownExecutor() {
+  try {
+    clearScheduledTimeouts();
+  } catch (e) {
+    /* ignore */
+  }
+  try {
+    stopPoller();
+  } catch (e) {
+    /* ignore */
+  }
+}
+// Test hooks (exported for unit tests only)
+export function __getScheduledTimeoutCount() {
+  return scheduledTimeouts.size;
+}
+
+export function __shutdownExecutorForTest() {
+  return _shutdownExecutor();
+}
+
+if (typeof process !== 'undefined' && process && (process as any).on) {
+  try {
+    (process as any).on('beforeExit', _shutdownExecutor);
+    (process as any).on('exit', _shutdownExecutor);
+    // also handle common signals in CI/dev
+    (process as any).on('SIGINT', () => {
+      _shutdownExecutor();
+      // re-raise default behaviour
+      process.exit(0);
+    });
+    (process as any).on('SIGTERM', () => {
+      _shutdownExecutor();
+      process.exit(0);
+    });
+  } catch (e) {
+    /* ignore environments where process signals are not supported */
   }
 }
 
