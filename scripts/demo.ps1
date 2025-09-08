@@ -59,15 +59,15 @@ function PostJson($endpoint, $file) {
             } catch { }
 
             $tryResponses = @()
-            try { if ($err.Exception -ne $null) { $tryResponses += $err.Exception.Response } } catch {}
-            try { if ($err.Exception.InnerException -ne $null) { $tryResponses += $err.Exception.InnerException.Response } } catch {}
-            try { if ($err.Response -ne $null) { $tryResponses += $err.Response } } catch {}
+            try { if ($null -ne $err.Exception) { $tryResponses += $err.Exception.Response } } catch {}
+            try { if ($null -ne $err.Exception.InnerException) { $tryResponses += $err.Exception.InnerException.Response } } catch {}
+            try { if ($null -ne $err.Response) { $tryResponses += $err.Response } } catch {}
 
             foreach ($resp in $tryResponses) {
                 try {
-                    if ($resp -ne $null) {
+                    if ($null -ne $resp) {
                         $stream = $resp.GetResponseStream()
-                        if ($stream -ne $null) {
+                        if ($null -ne $stream) {
                             $reader = New-Object System.IO.StreamReader($stream)
                             $bodyDump = $reader.ReadToEnd()
                             if ($bodyDump) { Write-Error "Response body: $bodyDump" }
@@ -98,7 +98,7 @@ $journeyResp = PostJson $journeyEndpoint $JourneyFile
 
 # Try common response shapes for journey id
 $journeyId = $null
-if ($journeyResp -ne $null) {
+if ($null -ne $journeyResp) {
     if ($journeyResp.journeyId) { $journeyId = $journeyResp.journeyId }
     elseif ($journeyResp.id) { $journeyId = $journeyResp.id }
     elseif ($journeyResp.journey -and $journeyResp.journey.id) { $journeyId = $journeyResp.journey.id }
@@ -117,7 +117,7 @@ $triggerResp = PostJson $triggerEndpoint $TriggerFile
 
 # Try common response shapes for run id
 $runId = $null
-if ($triggerResp -ne $null) {
+if ($null -ne $triggerResp) {
     if ($triggerResp.runId) { $runId = $triggerResp.runId }
     elseif ($triggerResp.id) { $runId = $triggerResp.id }
     elseif ($triggerResp.run -and $triggerResp.run.id) { $runId = $triggerResp.run.id }
@@ -136,7 +136,7 @@ $deadline = (Get-Date).AddSeconds($TimeoutSec)
 while ((Get-Date) -lt $deadline) {
     $run = GetJson $runEndpoint
     $state = $null
-    if ($run -ne $null) {
+    if ($null -ne $run) {
         if ($run.state) { $state = $run.state }
         elseif ($run.status) { $state = $run.status }
     }
