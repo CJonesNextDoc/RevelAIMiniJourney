@@ -150,10 +150,16 @@ When you submit this project please include the following items:
 4. Optional demo GIF or short screen recording
 
 	- Short screen recording API demo with endpoint testing via Postman:
-    <https://www.loom.com/share/1eac860e9e1347648779af5a3f524f20?sid=5cffa20f-ae19-43c9-b709-de899a2d9e51>
-    
-    - Short screen recording demo of a HOOS/KOOS survey journey via Postman:
-    <https://www.loom.com/share/3492a592a2e84d55963fe28ab2f1b34e?sid=f62f0f07-51f8-4adf-a29b-82e6e80b07d0>
+	<https://www.loom.com/share/1eac860e9e1347648779af5a3f524f20?sid=5cffa20f-ae19-43c9-b709-de899a2d9e51>
+
+	- Short screen recording demo of a HOOS/KOOS survey journey via Postman:
+	<https://www.loom.com/share/3492a592a2e84d55963fe28ab2f1b34e?sid=f62f0f07-51f8-4adf-a29b-82e6e80b07d0>
+
+	- Quick reproducible demo GIF (automated script):
+
+		The repository root now includes `demo_api_1.gif` — a short animated GIF recorded from the `scripts/demo.ps1` run.
+
+		![Automated API demo](./demo_api_1.gif)
 
 5. Miscellaneous items of interest:
 
